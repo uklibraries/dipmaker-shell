@@ -1,0 +1,543 @@
+#!/usr/bin/env ruby
+
+require 'digest'
+require 'fileutils'
+require 'find'
+require 'mimemagic'
+require 'nokogiri'
+require 'pathname'
+require 'require_all'
+require 'securerandom'
+require_all 'lib'
+
+DESIRED_MIME_TYPES = [
+    'image/tiff',
+    'application/pdf',
+    'application/xml',
+    'text/plain',
+    'audio/mp3',
+    'audio/ogg',
+    'video/mp4',
+]
+
+JOB_CLASSES = [
+    'tmp',
+    'new',
+    'working',
+    'success',
+    'failure',
+]
+
+# Get a list of files we care about, along with
+# a list of MIME types that are available.
+def files_for(dir)
+    unless File.exist? dir
+        return [[], []]
+    end
+    required = []
+    mime_types = {}
+    Find.find(dir) do |path|
+        if File.file? path
+            # For speed we judge the MIME type by path.
+            # Clients should verify the MIME type by more 
+            # precise methods, for example:
+            # 
+            #   mime_type = MimeMagic.by_magic(File.open(path)).to_s
+            #
+            mime_type = MimeMagic.by_path(path).to_s
+            if DESIRED_MIME_TYPES.include? mime_type
+                required << path
+                mime_types[mime_type] = 1
+            end
+        end
+    end
+    [required, mime_types]
+end
+
+def required_files(dir)
+    required = []
+    Find.find(dir) do |path|
+        if File.file? path
+            # For speed we judge the MIME type by path.
+            # Clients should verify the MIME type by more 
+            # precise methods, for example:
+            # 
+            #   mime_type = MimeMagic.by_magic(File.open(path)).to_s
+            #
+            mime_type = MimeMagic.by_path(path).to_s
+            if DESIRED_MIME_TYPES.include? mime_type
+                required << path
+            end
+        end
+    end
+    required
+end
+
+require 'trollop'
+opts = Trollop::options do
+    opt :aip_store, 'Path to AIP store', type: :string
+    opt :aip, 'AIP id', type: :string
+    opt :dip_store, 'Path to DIP store', type: :string
+    opt :dip, 'DIP id', type: :string
+    opt :ocr, 'OCR required', type: :boolean, default: false
+    opt :pdf, 'PDF master', type: :boolean, default: false
+    opt :format, 'Format -- "archival material" (default) or "images"', type: :string, default: 'archival material'
+end
+
+# Default options
+require 'pairtree'
+aip_tree = Pairtree.at(opts[:aip_store], create: false)
+aip = aip_tree.get(opts[:aip])
+aip_data_dir = File.join aip.path, 'data'
+dip_tree = Pairtree.at(opts[:dip_store], create: false)
+dip_id = opts[:dip]
+dip = dip_tree.mk(dip_id)
+
+# This needs to work for non-EAD submissions eventually,
+# but for now we *REQUIRE* that the submission is EAD-based.
+
+# Overview of DIP building process:
+#
+# Phase 1:
+#  * Build DIP shell
+#  * Open and hold METS reference
+#  * Open and hold EAD reference
+#  * Store copy of EAD in DIP
+
+#  * Build DIP shell
+data_dir = File.join dip.path, 'data'
+FileUtils.mkdir_p data_dir
+
+#  * Open and hold METS reference
+aip_mets_path = File.join aip.path, 'data', 'mets.xml'
+mets = Nokogiri::XML(IO.read aip_mets_path)
+
+#  * Open and hold EAD reference
+finding_aid_references = mets.xpath('//mets:file[@ID="MasterFindingAid"]/mets:FLocat')
+if finding_aid_references.size == 0
+    STDERR.puts 'Non-EAD submissions not yet supported, sorry'
+    exit
+end
+ead_filename = finding_aid_references[0]['xlink:href']
+base = File.basename ead_filename, '.xml'
+dao_filename = ead_filename.gsub(/\.xml$/, '.dao.xml')
+aip_ead_path = File.join aip.path, 'data', ead_filename
+ead = Nokogiri::XML(IO.read aip_ead_path)
+
+#  * Store copy of EAD in DIP
+dip_ead_path = File.join dip.path, 'data', ead_filename
+FileUtils.cp aip_ead_path, dip_ead_path
+
+# Phase 2:
+#  * Read EAD leaf component - container list pairs, using them to update
+#    the EAD and METS and generate job requests
+#  * Write out DAO EAD and DIP METS
+
+section_number = 0
+item_number = 0
+if mets.xpath('//mets:fileSec').size > 0
+    mets_fileSec = mets.xpath('//mets:fileSec').first
+else
+    mets_fileSec = Nokogiri::XML::Node.new 'mets:fileSec', mets
+    mets.xpath('mets:mets').first.add_child mets_fileSec
+end
+mets_structMap = Nokogiri::XML::Node.new 'mets:structMap', mets
+mets.xpath('mets:mets').first.add_child mets_structMap
+
+#  * Add reference to DAO EAD
+
+dao_flocat = Nokogiri::XML::Node.new 'mets:FLocat', mets
+dao_flocat['LOCTYPE'] = 'OTHER'
+dao_flocat['xlink:href'] = File.basename dao_filename
+
+dao_file = Nokogiri::XML::Node.new 'mets:file', mets
+dao_file['ID'] = 'AccessFindingAid'
+dao_file['MIMETYPE'] = 'application/xml'
+dao_file['USE'] = 'access'
+dao_file.add_child dao_flocat
+
+mets.xpath('//mets:fileGrp[@ID="FileGrpFindingAid"]').first.add_child dao_file
+
+rights = []
+userestricts = ead.xpath('//xmlns:userestrict')
+if userestricts.size > 0
+    userestricts.first.xpath('xmlns:p').each do |p|
+        rights << p.content
+    end
+end
+rights << 'Contact the Special Collections Research Center for information regarding rights and use of this collection.'
+rights = rights.join('  ')
+
+mets.xpath('//dc:rights', {'xmlns:dc' => "http://purl.org/dc/elements/1.1/"}).each do |r|
+    r.content = rights
+end
+
+ead.xpath(component_xpath).each do |component|
+    simple = true
+    component.xpath('xmlns:did/xmlns:container').each do |container|
+        if container['parent']
+            simple = false
+            break
+        end
+    end
+
+    if simple
+        path_components = component.xpath('xmlns:did/xmlns:container').map do |container|
+            render(container)
+        end
+        paths = [path_components.join('/')]
+    else
+        section = {}
+        section_ids = []
+        component.xpath('xmlns:did/xmlns:container').each do |container|
+            if container['parent']
+                # Add this container to the parent's section
+                section[container['parent']] << container.dup
+                section[container['id']] = section[container['parent']]
+            else
+                # Create a new section
+                section[container['id']] = [container.dup]
+                section_ids << container['id']
+            end
+        end
+        paths = section_ids.collect do |id|
+            section[id].map {|c| render(c)}.join('/')
+        end
+    end
+
+    paths = paths.collect do |path|
+        File.join base, path
+    end
+
+    file_count = 0
+    paths = paths.select do |path|
+        dir = File.join aip.path, 'data', path
+        files, mime_types = files_for(dir)
+        file_count += files.size
+        files.size > 0
+    end
+
+    next if paths.length == 0
+
+    section_number += 1
+    mets_section = Nokogiri::XML::Node.new 'mets:div', mets
+    mets_section['TYPE'] = 'section'
+    mets_section['LABEL'] = section_number
+    mets_section['ORDER'] = section_number
+    mets_structMap.add_child mets_section
+
+    # Add the DAO here, since we are treating the multiple
+    # boxes as a single unit of pagination
+    puts "Section #{section_number}: #{file_count}"
+    puts paths.join("\n")
+    puts
+    dao = Nokogiri::XML::Node.new 'dao', ead
+    dao['entityref'] = "#{dip_id}_#{section_number}_1"
+
+    component.xpath('xmlns:did').first.add_child dao
+
+    paths.each do |path|
+        dir = File.join aip.path, 'data', path
+        files, mime_types = files_for(dir)
+
+        # At this point we can begin to determine what jobs 
+        # need to be performed
+        items = []
+        jobs = {}
+        files.sort.each do |file|
+            file_base = File.basename(file)
+            relative_path = Pathname.new(file).relative_path_from(Pathname.new(aip_data_dir)).to_s
+            relative_dir = File.dirname(relative_path)
+
+            # Aggregate by (rough approximation of) basename
+            item = relative_path.dup
+            item.gsub!(/\..*$/, '')
+            item.gsub!(/[^0-9A-Za-z]/, '_')
+            if not(jobs[item])
+                jobs[item] = []
+                items << item
+            end
+
+            # Short name for tile subdirectories
+            item_base = File.basename(relative_path)
+            item_base.gsub!(/\..*$/, '')
+            item_base.gsub!(/[^0-9A-Za-z]/, '_')
+
+            job_id = SecureRandom.uuid
+
+            # An individual job should look like the following:
+            #
+            # {
+            #   id: '6a8c6cb0-f2bd-4515-8f22-0671b15976c4',
+            #   item: '56m307_Box_1_Folder_9_Seaton_1_9__11462',
+            #   item_base: 'Seaton_1_9_11462',
+            #   command: 'ocr',
+            #   source: '/path/to/aip/data/56m307/Box_1/Folder_9/Seaton_1_9__11462.tif',
+            #   target: '/path/to/dip/data/56m307/Box_1/Folder_9/Seaton_1_9__11462.txt',
+            #   mime_type: 'text/plain',
+            #   use: 'ocr',
+            # }
+
+            mime_type = MimeMagic.by_path(file).to_s
+            case mime_type
+            when 'image/tiff'
+                # Produce a number of derivatives
+                job_template = {
+                    item: item,
+                    item_base: item_base,
+                    source: file,
+                }
+
+                # 'image/jpeg' - Thumbnail (width: 150px, _tb.jpg)
+                jobs[item] << job_template.merge({
+                    id: SecureRandom.uuid,
+                    command: 'tiff2jpeg;150',
+                    target: File.join(data_dir, relative_dir, "#{item_base}_tb.jpg"),
+                    mime_type: 'image/jpeg',
+                    use: 'thumbnail',
+                })
+
+                # 'image/jpeg' - Front thumbnail (width: 400px, _ftb.jpg)
+                jobs[item] << job_template.merge({
+                    id: SecureRandom.uuid,
+                    command: 'tiff2jpeg;400',
+                    target: File.join(data_dir, relative_dir, "#{item_base}_ftb.jpg"),
+                    mime_type: 'image/jpeg',
+                    use: 'front thumbnail',
+                })
+
+                # 'image/jpeg' - Reference image (same resolution as TIFF, .jpg)
+                jobs[item] << job_template.merge({
+                    id: SecureRandom.uuid,
+                    command: 'tiff2jpeg',
+                    target: File.join(data_dir, relative_dir, "#{item_base}.jpg"),
+                    mime_type: 'image/jpeg',
+                    use: 'reference image',
+                })
+
+                # 'application/octet-stream' - Tiled image (tiledir / .tls)
+                jobs[item] << job_template.merge({
+                    id: SecureRandom.uuid,
+                    command: 'tile',
+                    target: File.join(data_dir, relative_dir, item_base, "#{item_base}.tls"),
+                    mime_type: 'application/octet-stream',
+                    use: 'tiled image',
+                })
+
+                # 'text/plain' - Tiles metadata (tiledir .txt)
+                jobs[item] << job_template.merge({
+                    id: SecureRandom.uuid,
+                    command: 'tile;metadata',
+                    target: File.join(data_dir, relative_dir, item_base, "#{item_base}.txt"),
+                    mime_type: 'text/plain',
+                    use: 'tiles metadata',
+                })
+
+                # 'application/pdf' - Print image (same resolution as TIFF, .pdf)
+                unless mime_types['application/pdf']
+                    jobs[item] << job_template.merge({
+                        id: SecureRandom.uuid,
+                        command: 'tiff2pdf',
+                        target: File.join(data_dir, relative_dir, "#{item_base}.pdf"),
+                        mime_type: 'application/pdf',
+                        use: 'print image',
+                    })
+
+                    if opts[:ocr] and not(mime_types['text/plain'])
+                        jobs[item] << job_template.merge({
+                            id: SecureRandom.uuid,
+                            command: 'ocr',
+                            target: File.join(data_dir, relative_dir, "#{item_base}.txt"),
+                            mime_type: 'text/plain',
+                            use: 'ocr',
+                        })
+                    end
+                end
+
+            when 'application/pdf'
+                use = opts[:pdf] ? 'master' : 'print image'
+                jobs[item] << job_template.merge({
+                    id: SecureRandom.uuid,
+                    command: 'copy',
+                    target: File.join(data_dir, relative_dir, "#{item_base}.pdf"),
+                    mime_type: 'application/pdf',
+                    use: use,
+                })
+                
+                if opts[:ocr]
+                    unless mime_types['application/xml']
+                        jobs[item] << job_template.merge({
+                            id: SecureRandom.uuid,
+                            command: 'pdf2alto',
+                            target: File.join(data_dir, relative_dir, "#{item_base}.xml"),
+                            mime_type: 'application/xml',
+                            use: 'coordinates',
+                        })
+                    end
+
+                    unless mime_types['text/plain']
+                        jobs[item] << job_template.merge({
+                            id: SecureRandom.uuid,
+                            command: 'pdf2text',
+                            target: File.join(data_dir, relative_dir, "#{item_base}.txt"),
+                            mime_type: 'text/plain',
+                            use: 'ocr',
+                        })
+                    end
+                end
+            when 'application/xml'
+                jobs[item] << {
+                    id: job_id,
+                    item: item,
+                    item_base: item_base,
+                    command: 'copy',
+                    source: file,
+                    target: File.join(data_dir, relative_dir, file_base),
+                    mime_type: 'application/xml',
+                    use: 'coordinates',
+                }
+            when 'text/plain'
+                jobs[item] << {
+                    id: job_id,
+                    item: item,
+                    item_base: item_base,
+                    command: 'copy',
+                    source: file,
+                    target: File.join(data_dir, relative_dir, file_base),
+                    mime_type: 'text/plain',
+                    use: 'ocr',
+                }
+            when 'audio/mp3'
+                jobs[item] << {
+                    id: job_id,
+                    item: item,
+                    item_base: item_base,
+                    command: 'copy',
+                    source: file,
+                    target: File.join(data_dir, relative_dir, file_base),
+                    mime_type: 'audio/mp3',
+                    use: 'reference audio',
+                }
+            when 'audio/ogg'
+                jobs[item] << {
+                    id: job_id,
+                    item: item,
+                    item_base: item_base,
+                    command: 'copy',
+                    source: file,
+                    target: File.join(data_dir, relative_dir, file_base),
+                    mime_type: 'audio/ogg',
+                    use: 'secondary reference audio',
+                }
+            when 'video/mp4'
+                jobs[item] << {
+                    id: job_id,
+                    item: item,
+                    item_base: item_base,
+                    command: 'copy',
+                    source: file,
+                    target: File.join(data_dir, relative_dir, file_base),
+                    mime_type: 'video/mp4',
+                    use: 'reference video',
+                }
+            else
+                # Ignore
+            end
+        end
+
+        # Iterate over jobs, storing them and updating METS
+        jobs_dir = File.join(dip.path, 'jobs')
+        items.each_with_index do |item, index|
+            order = index + 1
+
+            mets_div = Nokogiri::XML::Node.new 'mets:div', mets
+
+            # Add container for target files
+            item_number += 1
+            mets_fileGrp = Nokogiri::XML::Node.new 'mets:fileGrp', mets
+            mets_fileGrp['ID'] = "FileGrp#{item_number}"
+            mets_fileSec.add_child mets_fileGrp
+
+            item_type = 'item'
+            jobs[item].each do |job|
+                if job[:mime_type] == 'audio/mp3' and job == 'item'
+                    item_type = 'audio'
+                elsif job[:mime_type] == 'video/mp4' and job == 'item'
+                    item_type = 'video'
+                elsif job[:mime_type] == 'image/jpeg' and job == 'item'
+                    if opts[:format] == 'images'
+                        item_type = 'photograph'
+                    end
+                end
+
+                fileid = [
+                    job[:use].split(/\s+/).collect(&:capitalize).join,
+                    'File',
+                    Digest::MD5.hexdigest(job[:target]),
+                ].join
+                #puts fileid
+                mets_fptr = Nokogiri::XML::Node.new 'mets:fptr', mets
+                mets_fptr['FILEID'] = fileid
+                mets_div.add_child mets_fptr
+
+                mets_file = Nokogiri::XML::Node.new 'mets:file', mets
+                mets_file['ID'] = fileid
+                mets_file['USE'] = job[:use]
+                mets_file['MIMETYPE'] = job[:mime_type]
+                mets_fileGrp.add_child mets_file
+
+                mets_flocat = Nokogiri::XML::Node.new 'mets:FLocat', mets
+                relative_target = Pathname.new(job[:target]).relative_path_from(Pathname.new(data_dir)).to_s
+                mets_flocat['xlink:href'] = relative_target
+                mets_flocat['LOCTYPE'] = 'OTHER'
+                mets_file.add_child mets_flocat
+
+                command = job[:command].dup
+                command.gsub!(/;.*/, '')
+                job_dir = File.join(jobs_dir, 'services')
+                JOB_CLASSES.each do |job_class|
+                    FileUtils.mkdir_p "#{job_dir}/#{job_class}"
+                end
+                File.open("#{job_dir}/tmp/#{job[:id]}", 'w') do |f|
+                    f.write job.to_json
+                end
+
+                FileUtils.mv "#{job_dir}/tmp/#{job[:id]}", "#{job_dir}/new/#{job[:id]}"
+            end
+
+            label = order.to_s
+            cxml = Nokogiri::XML(component.to_xml)
+            unittitles = cxml.xpath('//unittitle')
+            if unittitles.size > 0
+                label = unittitles.first.content.strip
+            else
+                unitdates = cxml.xpath('//unitdate')
+                if unitdates.size > 0
+                    label = unitdates.first.content.strip
+                end
+            end
+
+            mets_div['TYPE'] = item_type
+            mets_div['LABEL'] = label
+            mets_div['ORDER'] = order
+            mets_section.add_child mets_div
+        end
+    end
+end
+
+dao_ead_path = File.join(data_dir, dao_filename)
+File.open(dao_ead_path, 'w') do |f|
+    f.write ead.to_xml
+end
+
+dip_mets_path = File.join(data_dir, 'mets.xml')
+File.open(dip_mets_path, 'w') do |f|
+    f.write mets.to_xml(indent: 2)
+end
+
+# Phase 3:
+#  * Submit job requests to appropriate services
+#  * Monitor jobs for completion
+
+# Phase 4:
+#  * Generate checksum manifests for DIP

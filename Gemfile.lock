@@ -1,0 +1,25 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    mimemagic (0.3.1)
+    mini_portile2 (2.1.0)
+    nokogiri (1.6.8)
+      mini_portile2 (~> 2.1.0)
+      pkg-config (~> 1.1.7)
+    pkg-config (1.1.7)
+    require_all (1.3.3)
+    rpairtree (0.2.0)
+    trollop (2.1.2)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  mimemagic
+  nokogiri
+  require_all
+  rpairtree
+  trollop
+
+BUNDLED WITH
+   1.12.5
