@@ -28,6 +28,10 @@ JOB_CLASSES = [
     'failure',
 ]
 
+SUPPORTED_TYPES = [
+    'findingaid',
+]
+
 # Get a list of files we care about, along with
 # a list of MIME types that are available.
 def files_for(dir)
@@ -82,6 +86,7 @@ opts = Trollop::options do
     opt :ocr, 'OCR required', type: :boolean, default: false
     opt :pdf, 'PDF master', type: :boolean, default: false
     opt :format, 'Format -- "archival material" (default) or "images"', type: :string, default: 'archival material'
+    opt :type, "Type -- support object types: #{SUPPORTED_TYPES.join(', ')}", type: :string, default: 'findingaid'
 end
 
 # Default options
@@ -92,9 +97,15 @@ aip_data_dir = File.join aip.path, 'data'
 dip_tree = Pairtree.at(opts[:dip_store], create: false)
 dip_id = opts[:dip]
 dip = dip_tree.mk(dip_id)
+obj_type = opts[:type]
 
-# This needs to work for non-EAD submissions eventually,
-# but for now we *REQUIRE* that the submission is EAD-based.
+unless SUPPORTED_TYPES.include? obj_type
+    STDERR.puts 'The requested type is not supported.'
+    exit
+end
+
+case obj_type
+when 'findingaid'
 
 # Overview of DIP building process:
 #
@@ -115,7 +126,7 @@ mets = Nokogiri::XML(IO.read aip_mets_path)
 #  * Open and hold EAD reference
 finding_aid_references = mets.xpath('//mets:file[@ID="MasterFindingAid"]/mets:FLocat')
 if finding_aid_references.size == 0
-    STDERR.puts 'Non-EAD submissions not yet supported, sorry'
+    STDERR.puts 'Please reference the EAD from the METS file.'
     exit
 end
 ead_filename = finding_aid_references[0]['xlink:href']
@@ -535,9 +546,5 @@ File.open(dip_mets_path, 'w') do |f|
     f.write mets.to_xml(indent: 2)
 end
 
-# Phase 3:
-#  * Submit job requests to appropriate services
-#  * Monitor jobs for completion
-
-# Phase 4:
-#  * Generate checksum manifests for DIP
+# other cases
+end
