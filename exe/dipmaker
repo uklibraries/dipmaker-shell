@@ -89,6 +89,7 @@ opts = Trollop::options do
     opt :pdf, 'PDF master', type: :boolean, default: false
     opt :format, 'Format -- "archival material" (default) or "images"', type: :string, default: 'archival material'
     opt :type, "Type -- support object types: #{SUPPORTED_TYPES.join(', ')}", type: :string, default: 'findingaid'
+    opt :partial, "Look for files in a subdirectory of the AIP", type: :string, default: nil
 end
 
 # Default options
@@ -120,6 +121,11 @@ when 'findingaid'
 #  * Build DIP shell
 data_dir = File.join dip.path, 'data'
 FileUtils.mkdir_p data_dir
+jobs_dir = File.join dip.path, 'jobs'
+job_dir = File.join(jobs_dir, 'services')
+JOB_CLASSES.each do |job_class|
+    FileUtils.mkdir_p "#{job_dir}/#{job_class}"
+end
 
 #  * Open and hold METS reference
 aip_mets_path = File.join aip.path, 'data', 'mets.xml'
@@ -559,12 +565,21 @@ when 'free_form'
 #  * Build DIP shell
 data_dir = File.join dip.path, 'data'
 FileUtils.mkdir_p data_dir
+jobs_dir = File.join dip.path, 'jobs'
+job_dir = File.join(jobs_dir, 'services')
+JOB_CLASSES.each do |job_class|
+    FileUtils.mkdir_p "#{job_dir}/#{job_class}"
+end
 
 #  * Determine IDNO
 template_location = nil
 idno = nil
 
+partial = opts[:partial]
 locations = ['.', 'templates']
+if partial
+    locations = [partial, File.join(partial, 'templates'), File.join(partial, 'mets.xml')]
+end
 
 while not(idno) and locations.count > 0
     location = locations.shift
