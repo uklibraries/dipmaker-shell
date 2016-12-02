@@ -334,24 +334,6 @@ ead.xpath(component_xpath).each do |component|
                     use: 'reference image',
                 })
 
-                # 'application/octet-stream' - Tiled image (tiledir / .tls)
-                jobs[item] << job_template.merge({
-                    id: SecureRandom.uuid,
-                    command: 'tile',
-                    target: File.join(data_dir, relative_dir, item_base, "#{item_base}.tls"),
-                    mime_type: 'application/octet-stream',
-                    use: 'tiled image',
-                })
-
-                # 'text/plain' - Tiles metadata (tiledir .txt)
-                jobs[item] << job_template.merge({
-                    id: SecureRandom.uuid,
-                    command: 'tile;metadata',
-                    target: File.join(data_dir, relative_dir, item_base, "#{item_base}.txt"),
-                    mime_type: 'text/plain',
-                    use: 'tiles metadata',
-                })
-
                 # 'application/pdf' - Print image (same resolution as TIFF, .pdf)
                 unless mime_types['application/pdf']
                     jobs[item] << job_template.merge({
@@ -719,24 +701,6 @@ files.sort.each do |file|
             target: File.join(data_dir, relative_dir, "#{item_base}.jpg"),
             mime_type: 'image/jpeg',
             use: 'reference image',
-        })
-
-        # 'application/octet-stream' - Tiled image (tiledir / .tls)
-        jobs[item] << job_template.merge({
-            id: SecureRandom.uuid,
-            command: 'tile',
-            target: File.join(data_dir, relative_dir, item_base, "#{item_base}.tls"),
-            mime_type: 'application/octet-stream',
-            use: 'tiled image',
-        })
-
-        # 'text/plain' - Tiles metadata (tiledir .txt)
-        jobs[item] << job_template.merge({
-            id: SecureRandom.uuid,
-            command: 'tile;metadata',
-            target: File.join(data_dir, relative_dir, item_base, "#{item_base}.txt"),
-            mime_type: 'text/plain',
-            use: 'tiles metadata',
         })
 
         # 'application/pdf' - Print image (same resolution as TIFF, .pdf)
