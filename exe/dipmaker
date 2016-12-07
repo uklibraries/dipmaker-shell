@@ -344,7 +344,14 @@ ead.xpath(component_xpath).each do |component|
                         use: 'print image',
                     })
 
-                    if opts[:ocr] and not(mime_types['text/plain'])
+                    # need a better solution...
+                    candidate_ocr_files = files.select {|name|
+                      name =~ /\.txt$/
+                    }.collect {|name|
+                      File.basename(name, '.txt')
+                    }
+                    if opts[:ocr] and not(candidate_ocr_files.include? item_base)
+                    #if opts[:ocr] and not(mime_types['text/plain'])
                         jobs[item] << job_template.merge({
                             id: SecureRandom.uuid,
                             command: 'ocr',
@@ -713,7 +720,14 @@ files.sort.each do |file|
                 use: 'print image',
             })
 
-            if opts[:ocr] and not(mime_types['text/plain'])
+            # need a better solution...
+            candidate_ocr_files = files.select {|name|
+              name =~ /\.txt$/
+            }.collect {|name|
+              File.basename(name, '.txt')
+            }
+            if opts[:ocr] and not(candidate_ocr_files.include? item_base)
+            #if opts[:ocr] and not(mime_types['text/plain'])
                 jobs[item] << job_template.merge({
                     id: SecureRandom.uuid,
                     command: 'ocr',
