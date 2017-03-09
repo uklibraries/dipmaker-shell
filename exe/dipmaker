@@ -270,7 +270,7 @@ ead.xpath(component_xpath).each do |component|
 
             # Aggregate by (rough approximation of) basename
             item = relative_path.dup
-            item.gsub!(/\..*$/, '')
+            item.gsub!(/\.[^\.]*$/, '')
             item.gsub!(/[^0-9A-Za-z]/, '_')
             if not(jobs[item])
                 jobs[item] = []
@@ -646,7 +646,7 @@ files.sort.each do |file|
 
     # Aggregate by (rough approximation of) basename
     item = relative_path.dup
-    item.gsub!(/\..*$/, '')
+    item.gsub!(/\.[^\.]*$/, '')
     item.gsub!(/[^0-9A-Za-z]/, '_')
     if not(jobs[item])
         jobs[item] = []
