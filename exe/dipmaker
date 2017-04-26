@@ -127,8 +127,17 @@ JOB_CLASSES.each do |job_class|
     FileUtils.mkdir_p "#{job_dir}/#{job_class}"
 end
 
+partial = opts[:partial]
+if partial
+  aip_base_path = File.join aip.path, 'data', partial
+  aip_data_dir = File.join aip.path, 'data', partial
+else
+  aip_base_path = File.join aip.path, 'data'
+  aip_data_dir = File.join aip.path, 'data'
+end
+
 #  * Open and hold METS reference
-aip_mets_path = File.join aip.path, 'data', 'mets.xml'
+aip_mets_path = File.join aip_base_path, 'mets.xml'
 mets = Nokogiri::XML(IO.read aip_mets_path)
 
 #  * Open and hold EAD reference
@@ -140,7 +149,7 @@ end
 ead_filename = finding_aid_references[0]['xlink:href']
 base = File.basename ead_filename, '.xml'
 dao_filename = ead_filename.gsub(/\.xml$/, '.dao.xml')
-aip_ead_path = File.join aip.path, 'data', ead_filename
+aip_ead_path = File.join aip_base_path, ead_filename
 ead = Nokogiri::XML(IO.read aip_ead_path)
 
 #  * Store copy of EAD in DIP
@@ -230,7 +239,7 @@ ead.xpath(component_xpath).each do |component|
 
     file_count = 0
     paths = paths.select do |path|
-        dir = File.join aip.path, 'data', path
+        dir = File.join aip_base_path, path
         files, mime_types = files_for(dir)
         file_count += files.size
         files.size > 0
@@ -256,7 +265,7 @@ ead.xpath(component_xpath).each do |component|
     component.xpath('xmlns:did').first.add_child dao
 
     paths.each do |path|
-        dir = File.join aip.path, 'data', path
+        dir = File.join aip_base_path, path
         files, mime_types = files_for(dir)
 
         # At this point we can begin to determine what jobs 
