@@ -17,6 +17,7 @@ DESIRED_MIME_TYPES = [
     'application/xml',
     'text/plain',
     'audio/mp3',
+    'audio/mpeg',
     'audio/ogg',
     'video/mp4',
 ]
@@ -425,6 +426,7 @@ ead.xpath(component_xpath).each do |component|
                     use: 'ocr',
                 }
             when 'audio/mp3'
+            when 'audio/mpeg'
                 jobs[item] << {
                     id: job_id,
                     item: item,
@@ -477,11 +479,11 @@ ead.xpath(component_xpath).each do |component|
 
             item_type = 'item'
             jobs[item].each do |job|
-                if job[:mime_type] == 'audio/mp3' and job == 'item'
+                if job[:mime_type] == 'audio/mp3'
                     item_type = 'audio'
-                elsif job[:mime_type] == 'video/mp4' and job == 'item'
+                elsif job[:mime_type] == 'video/mp4'
                     item_type = 'video'
-                elsif job[:mime_type] == 'image/jpeg' and job == 'item'
+                elsif job[:mime_type] == 'image/jpeg'
                     if opts[:format] == 'images'
                         item_type = 'photograph'
                     end
@@ -683,14 +685,15 @@ files.sort.each do |file|
     # }
 
     mime_type = MimeMagic.by_path(file).to_s
+    job_template = {
+        item: item,
+        item_base: item_base,
+        source: file,
+    }
+
     case mime_type
     when 'image/tiff'
         # Produce a number of derivatives
-        job_template = {
-            item: item,
-            item_base: item_base,
-            source: file,
-        }
 
         # 'image/jpeg' - Thumbnail (width: 150px, _tb.jpg)
         jobs[item] << job_template.merge({
@@ -853,11 +856,11 @@ items.each_with_index do |item, index|
 
     item_type = 'item'
     jobs[item].each do |job|
-        if job[:mime_type] == 'audio/mp3' and job == 'item'
+        if job[:mime_type] == 'audio/mp3'
             item_type = 'audio'
-        elsif job[:mime_type] == 'video/mp4' and job == 'item'
+        elsif job[:mime_type] == 'video/mp4'
             item_type = 'video'
-        elsif job[:mime_type] == 'image/jpeg' and job == 'item'
+        elsif job[:mime_type] == 'image/jpeg'
             if opts[:format] == 'images'
                 item_type = 'photograph'
             end
