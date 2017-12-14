@@ -1,6 +1,9 @@
 GEM
   remote: https://rubygems.org/
   specs:
+    cmdparse (3.0.3)
+    hexapdf (0.5.0)
+      cmdparse (~> 3.0, >= 3.0.3)
     mimemagic (0.3.1)
     mini_portile2 (2.3.0)
     mustache (0.99.4)
@@ -14,6 +17,7 @@ PLATFORMS
   ruby
 
 DEPENDENCIES
+  hexapdf (~> 0.5.0)
   mimemagic
   mustache
   nokogiri

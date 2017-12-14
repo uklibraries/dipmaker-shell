@@ -3,6 +3,7 @@
 require 'digest'
 require 'fileutils'
 require 'find'
+require 'hexapdf'
 require 'mimemagic'
 require 'mustache'
 require 'nokogiri'
@@ -33,7 +34,17 @@ JOB_CLASSES = [
 SUPPORTED_TYPES = [
     'findingaid',
     'free_form',
+    'multipage',
 ]
+
+# This is a minimal rights statement usable by any package.  Finding aid
+# collections will generally have more extensive rights statements, but
+# are expected to include this statement at the end.
+#
+# --mps 2017-12-14
+def rights_statement
+    'Contact the Special Collections Research Center for information regarding rights and use of this collection.'
+end
 
 # Get a list of files we care about, along with
 # a list of MIME types that are available.
@@ -194,7 +205,7 @@ if userestricts.size > 0
         rights << p.content
     end
 end
-rights << 'Contact the Special Collections Research Center for information regarding rights and use of this collection.'
+rights << rights_statement
 rights = rights.join('  ')
 
 mets.xpath('//dc:rights', {'xmlns:dc' => "http://purl.org/dc/elements/1.1/"}).each do |r|
@@ -607,7 +618,7 @@ if not(idno or partial)
 end
 
 if not(idno)
-    puts "ERROR: cannot determine METS template location"
+    STDERR.puts "ERROR: cannot determine METS template location"
     exit
 end
 
@@ -618,7 +629,7 @@ puts "Images location: #{images_location}"
 mets_template = IO.read(template_location)
 
 if mets_template !~ /{{current_timestamp}}/
-    puts "Support for new-style templates is not yet supported."
+    STDERR.puts "Support for new-style templates is not yet supported."
     exit
 end
 
@@ -644,19 +655,10 @@ end
 mets_structMap = Nokogiri::XML::Node.new 'mets:structMap', mets
 mets.xpath('mets:mets').first.add_child mets_structMap
 
-# update rights
-rights = 'Contact the Special Collections Research Center for information regarding rights and use of this collection.'
-
+# Set rights statement
 mets.xpath('//dc:rights', {'xmlns:dc' => "http://purl.org/dc/elements/1.1/"}).each do |r|
-    r.content = rights
+    r.content = rights_statement
 end
-
-data_dir = File.join dip.path, 'data'
-FileUtils.mkdir_p data_dir
-
-#files = Find.find(images_location).select do |path|
-#    File.file?(path) and path =~ /\.tif$/
-#end
 
 files, mime_types = files_for(images_location)
 
@@ -925,5 +927,211 @@ File.open(dip_mets_path, 'w') do |f|
     f.write mets.to_xml(indent: 2)
 end
 
-# other cases
+# multipage
+when 'multipage'
+
+# Packages should look like the following:
+#
+# data/
+#   foobar.pdf <- single multipage PDF
+#   mets.xml
+#
+# The resulting DIP shell will have a single job file,
+# splitting foobar.pdf into pages named according to the
+# pattern foobar/page_%04d.pdf .  (If the PDF has more than
+# 9999 pages, the pattern will need to be updated
+# accordingly.)
+#
+# Thus the resulting DIP should look like the following:
+#
+# data/
+#   foobar/
+#     page_0001.pdf
+#     page_0002.pdf
+#     ...
+#     page_0144.pdf
+#   mets.xml
+#
+# --mps 2017-12-14
+
+# Phase 1:
+#  * Build DIP shell
+#  * Determine IDNO
+#  * Open and hold METS template reference
+
+#  * Build DIP shell
+data_dir = File.join dip.path, 'data'
+FileUtils.mkdir_p data_dir
+jobs_dir = File.join dip.path, 'jobs'
+job_dir = File.join(jobs_dir, 'services')
+JOB_CLASSES.each do |job_class|
+    FileUtils.mkdir_p "#{job_dir}/#{job_class}"
+end
+
+#  * Determine IDNO
+the_pdf = nil
+candidates = Dir.glob("#{aip_data_dir}/*.pdf")
+if candidates.count > 0
+    the_pdf = candidates.first
+end
+
+if the_pdf
+    idno = File.basename the_pdf, '.pdf'
+end
+
+if not(idno)
+    STDERR.puts "ERROR: cannot find base PDF"
+    exit
+end
+
+puts "idno: #{idno}"
+
+#  * Open and hold METS template reference
+aip_mets_file = File.join aip_data_dir, 'mets.xml'
+mets_template = IO.read(aip_mets_file)
+
+if mets_template !~ /{{current_timestamp}}/
+    STDERR.puts "Support for new-style templates is not yet supported."
+    exit
+end
+
+# Okay, fill out the "obvious" metadata, then switch to Nokogiri
+metadata = {
+    :current_year => Date.today.year,
+    :current_timestamp => Time.new.strftime('%Y-%m_%dT%H:%M:%S'),
+    :pagination => '',
+}
+mets_template = Mustache.render(mets_template, metadata)
+mets = Nokogiri::XML(mets_template)
+
+# Phase 2:
+#  * Add METS metadata, including rights
+#  * Get PDF page count and determine pagination
+
+#  * Add METS metadata, including rights
+if mets.xpath('//mets:fileSec').size > 0
+    mets_fileSec = mets.xpath('//mets:fileSec').first
+else
+    mets_fileSec = Nokogiri::XML::Node.new 'mets:fileSec', mets
+    mets.xpath('mets:mets').first.add_child mets_fileSec
+end
+mets_structMap = Nokogiri::XML::Node.new 'mets:structMap', mets
+mets.xpath('mets:mets').first.add_child mets_structMap
+
+# Set rights statement
+mets.xpath('//dc:rights', {'xmlns:dc' => "http://purl.org/dc/elements/1.1/"}).each do |r|
+    r.content = rights_statement
+end
+
+#  * Get PDF page count and determine pagination
+doc = HexaPDF::Document.open(the_pdf)
+page_count = doc.pages.count
+puts "page count: #{page_count}"
+
+job_id = SecureRandom.uuid
+
+# An individual job should look like the following:
+#
+# {
+#   id: '6a8c6cb0-f2bd-4515-8f22-0671b15976c4',
+#   item: '56m307_Box_1_Folder_9_Seaton_1_9__11462',
+#   item_base: 'Seaton_1_9_11462',
+#   command: 'ocr',
+#   source: '/path/to/aip/data/56m307/Box_1/Folder_9/Seaton_1_9__11462.tif',
+#   target: '/path/to/dip/data/56m307/Box_1/Folder_9/Seaton_1_9__11462.txt',
+#   mime_type: 'text/plain',
+#   use: 'ocr',
+# }
+
+job = {
+    id: job_id,
+    item: idno,
+    item_base: idno,
+    command: 'pdfsplit',
+    source: the_pdf,
+    target: File.join(data_dir, idno),
+    mime_type: 'application/pdf',
+    page_count: page_count,
+}
+
+if opts[:ocr]
+    job['ocr_required'] = true
+end
+
+File.open("#{job_dir}/tmp/#{job[:id]}", 'w') do |f|
+    f.write job.to_json
+end
+
+# Add appropriate pages to METS
+if page_count < 10000
+    pattern = '%04d'
+else
+    pattern = '%0' + Math.log10(page_count).ceil.to_s + 'd'
+end
+(1..page_count).each do |page_number|
+    order = page_number
+    mets_div = Nokogiri::XML::Node.new 'mets:div', mets
+
+    # Add container for target files
+    mets_fileGrp = Nokogiri::XML::Node.new 'mets:fileGrp', mets
+    mets_fileGrp['ID'] = "FileGrp#{page_number}"
+    mets_fileSec.add_child mets_fileGrp
+
+    # PDF
+    target_pdf = File.join(idno, sprintf("page_#{pattern}.pdf", page_number))
+    fileid = [
+        'PrintImageFile',
+        Digest::MD5.hexdigest(target_pdf),
+    ].join
+    mets_fptr = Nokogiri::XML::Node.new 'mets:fptr', mets
+    mets_fptr['FILEID'] = fileid
+    mets_div.add_child mets_fptr
+
+    mets_file = Nokogiri::XML::Node.new 'mets:file', mets
+    mets_file['ID'] = fileid
+    mets_file['USE'] = 'print image'
+    mets_fileGrp.add_child mets_file
+
+    mets_flocat = Nokogiri::XML::Node.new 'mets:FLocat', mets
+    mets_flocat['xlink:href'] = target_pdf
+    mets_flocat['LOCTYPE'] = 'OTHER'
+    mets_file.add_child mets_flocat
+
+    # OCR if needed
+    if opts[:ocr]
+        target_ocr = File.join(idno, sprintf("page_#{pattern}.txt", page_number))
+        fileid = [
+            'OcrFile',
+            Digest::MD5.hexdigest(target_ocr),
+        ].join
+        mets_fptr = Nokogiri::XML::Node.new 'mets:fptr', mets
+        mets_fptr['FILEID'] = fileid
+        mets_div.add_child mets_fptr
+
+        mets_file = Nokogiri::XML::Node.new 'mets:file', mets
+        mets_file['ID'] = fileid
+        mets_file['USE'] = 'ocr'
+        mets_fileGrp.add_child mets_file
+
+        mets_flocat = Nokogiri::XML::Node.new 'mets:FLocat', mets
+        mets_flocat['xlink:href'] = target_ocr
+        mets_flocat['LOCTYPE'] = 'OTHER'
+        mets_file.add_child mets_flocat
+    end
+
+    label = order.to_s
+
+    mets_div['TYPE'] = 'item'
+    mets_div['LABEL'] = label
+    mets_div['ORDER'] = order
+    mets_structMap.add_child mets_div
+end
+
+dip_mets_path = File.join(data_dir, 'mets.xml')
+File.open(dip_mets_path, 'w') do |f|
+    f.write mets.to_xml(index: 2)
+end
+
+#############################################################################
+# Add other supported types above this section (and update SUPPORTED_TYPES).
 end
