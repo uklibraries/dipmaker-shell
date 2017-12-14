@@ -577,6 +577,7 @@ idno = nil
 
 partial = opts[:partial]
 locations = ['.', 'templates']
+# XXX: Why add mets.xml here? --mps 2017-12-12
 if partial
     locations = [partial, File.join(partial, 'templates'), File.join(partial, 'mets.xml')]
 end
@@ -591,6 +592,17 @@ while not(idno) and locations.count > 0
         idno = File.basename template_location, '.xml'
         images_location = File.join File.dirname(template_location), idno
         images_location.gsub!(/templates/, 'sips')
+    end
+end
+
+if not(idno or partial)
+    # If we're processing a full package and there's just one directory,
+    # then mets.xml is an acceptable template location.
+    dirs = Dir.glob("#{aip_data_dir}/*").select {|f| File.directory? f}
+    if dirs.count == 1 and File.exist?("#{aip_data_dir}/mets.xml")
+        idno = File.basename dirs.first
+        template_location = "#{aip_data_dir}/mets.xml"
+        images_location = dirs.first
     end
 end
 
