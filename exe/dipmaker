@@ -1061,6 +1061,7 @@ end
 File.open("#{job_dir}/tmp/#{job[:id]}", 'w') do |f|
     f.write job.to_json
 end
+FileUtils.mv "#{job_dir}/tmp/#{job[:id]}", "#{job_dir}/new/#{job[:id]}"
 
 # Add appropriate pages to METS
 if page_count < 10000
