@@ -1098,6 +1098,66 @@ end
     mets_flocat['LOCTYPE'] = 'OTHER'
     mets_file.add_child mets_flocat
 
+    # reference image
+    target_ref = File.join(idno, sprintf("page_#{pattern}.jpg", page_number))
+    fileid = [
+        'ReferenceImageFile',
+        Digest::MD5.hexdigest(target_ref),
+    ].join
+    mets_fptr = Nokogiri::XML::Node.new 'mets:fptr', mets
+    mets_fptr['FILEID'] = fileid
+    mets_div.add_child mets_fptr
+
+    mets_file = Nokogiri::XML::Node.new 'mets:file', mets
+    mets_file['ID'] = fileid
+    mets_file['USE'] = 'reference image'
+    mets_fileGrp.add_child mets_file
+
+    mets_flocat = Nokogiri::XML::Node.new 'mets:FLocat', mets
+    mets_flocat['xlink:href'] = target_ref
+    mets_flocat['LOCTYPE'] = 'OTHER'
+    mets_file.add_child mets_flocat
+
+    # front thumbnail
+    target_front = File.join(idno, sprintf("page_#{pattern}_ftb.jpg", page_number))
+    fileid = [
+        'FrontThumbnailFile',
+        Digest::MD5.hexdigest(target_front),
+    ].join
+    mets_fptr = Nokogiri::XML::Node.new 'mets:fptr', mets
+    mets_fptr['FILEID'] = fileid
+    mets_div.add_child mets_fptr
+
+    mets_file = Nokogiri::XML::Node.new 'mets:file', mets
+    mets_file['ID'] = fileid
+    mets_file['USE'] = 'front thumbnail'
+    mets_fileGrp.add_child mets_file
+
+    mets_flocat = Nokogiri::XML::Node.new 'mets:FLocat', mets
+    mets_flocat['xlink:href'] = target_front
+    mets_flocat['LOCTYPE'] = 'OTHER'
+    mets_file.add_child mets_flocat
+
+    # thumbnail
+    target_thumb = File.join(idno, sprintf("page_#{pattern}_tb.jpg", page_number))
+    fileid = [
+        'ThumbnailFile',
+        Digest::MD5.hexdigest(target_thumb),
+    ].join
+    mets_fptr = Nokogiri::XML::Node.new 'mets:fptr', mets
+    mets_fptr['FILEID'] = fileid
+    mets_div.add_child mets_fptr
+
+    mets_file = Nokogiri::XML::Node.new 'mets:file', mets
+    mets_file['ID'] = fileid
+    mets_file['USE'] = 'thumbnail'
+    mets_fileGrp.add_child mets_file
+
+    mets_flocat = Nokogiri::XML::Node.new 'mets:FLocat', mets
+    mets_flocat['xlink:href'] = target_thumb
+    mets_flocat['LOCTYPE'] = 'OTHER'
+    mets_file.add_child mets_flocat
+
     # OCR if needed
     if opts[:ocr]
         target_ocr = File.join(idno, sprintf("page_#{pattern}.txt", page_number))
