@@ -91,8 +91,8 @@ def required_files(dir)
     required
 end
 
-require 'trollop'
-opts = Trollop::options do
+require 'optimist'
+opts = Optimist::options do
     opt :aip_store, 'Path to AIP store', type: :string
     opt :aip, 'AIP id', type: :string
     opt :dip_store, 'Path to DIP store', type: :string
